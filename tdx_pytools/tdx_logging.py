@@ -9,6 +9,7 @@ Logging utilities for tdx_pytools
 This module provides centralized logging configuration for both library and CLI usage.
 """
 
+import copy
 import logging
 import sys
 from typing import Optional, Union
@@ -28,7 +29,8 @@ class ColoredFormatter(logging.Formatter):
     }
 
     def format(self, record):
-        # Apply color to the log level name
+        # Apply color to the log level name (on a copy to avoid polluting other handlers)
+        record = copy.copy(record)
         if record.levelname in self.COLORS:
             record.levelname = f"{self.COLORS[record.levelname]}{record.levelname}{self.COLORS['RESET']}"
         return super().format(record)
@@ -66,10 +68,10 @@ def setup_logging(
     elif isinstance(level, str):
         level = getattr(logging, level.upper(), logging.INFO)
 
-    # Configure the root logger to ensure all loggers work (including __main__)
-    root_logger = logging.getLogger()
-    root_logger.setLevel(level)
-    root_logger.handlers.clear()
+    # Use a named logger
+    pkg_logger = logging.getLogger(name)
+    pkg_logger.handlers.clear()
+    pkg_logger.setLevel(level)
 
     # Determine format string based on mode
     if format_string is None:
@@ -80,7 +82,7 @@ def setup_logging(
             # More detailed format for library usage
             format_string = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 
-    # Console handler for root logger
+    # Console handler
     console_handler = logging.StreamHandler(sys.stdout)
     console_handler.setLevel(level)
 
@@ -92,7 +94,7 @@ def setup_logging(
         formatter = logging.Formatter(format_string)
 
     console_handler.setFormatter(formatter)
-    root_logger.addHandler(console_handler)
+    pkg_logger.addHandler(console_handler)
 
     # File handler (optional)
     if log_file:
@@ -103,10 +105,9 @@ def setup_logging(
             "%(asctime)s - %(name)s - %(levelname)s - %(funcName)s:%(lineno)d - %(message)s"
         )
         file_handler.setFormatter(file_formatter)
-        root_logger.addHandler(file_handler)
+        pkg_logger.addHandler(file_handler)
 
-    # Return named logger (or root logger)
-    return logging.getLogger(name)
+    return pkg_logger
 
 
 def get_logger(name: str = "tdx_pytools") -> logging.Logger:
@@ -175,17 +176,21 @@ def log_function_exit(func_name: str, result=None) -> None:
         logger.debug(f"Exiting {func_name}")
 
 
-def log_verification_step(step: str, status: str, details: str = "") -> None:
+def log_verification_step(
+    step: str, status: str, details: str = "", log: Optional[logging.Logger] = None
+) -> None:
     """Log a verification step with status."""
+    _log = log or logger
     status_upper = status.upper()
+    detail_str = f" {details}" if details else ""
     if status_upper in ["PASS", "SUCCESS", "OK"]:
-        logger.info(f"✓ {step}: {status}" + (f" - {details}" if details else ""))
+        _log.info(f"✓ {step}:{detail_str} {status}")
     elif status_upper in ["FAIL", "FAILED", "ERROR"]:
-        logger.error(f"! {step}: {status}" + (f" - {details}" if details else ""))
+        _log.error(f"! {step}:{detail_str} {status}")
     elif status_upper in ["SKIP", "SKIPPED"]:
-        logger.warning(f"- {step}: {status}" + (f" - {details}" if details else ""))
+        _log.warning(f"- {step}:{detail_str} {status}")
     else:
-        logger.info(f"  {step}: {status}" + (f" - {details}" if details else ""))
+        _log.info(f"  {step}:{detail_str} {status}")
 
 
 def log_certificate_info(
@@ -210,7 +215,7 @@ def log_network_request(
 ) -> None:
     """Log network requests."""
     msg = f"{method} {url}"
-    if status_code:
+    if status_code is not None:
         msg += f" - Status: {status_code}"
     logger.debug(msg)
 
